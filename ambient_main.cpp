@@ -19,7 +19,7 @@ DHT_Unified dht(DHTPIN, DHTTYPE);
 TimerManager timer;
 
 #ifndef WIFI_SECRET
-#error("Please create a wifi_pass.secret.h file with wifi credentials. See the project page for informaiton: https://github.com/grnt426/HomeAcDevice")
+#error("Please create a wifi_pass.secret.h file with wifi credentials. See the project page for informaiton: https://github.com/grnt426/HomeAmbientSensor")
 #endif
 
 WifiHandler wifiHandler(WIFI_SSID, WIFI_PASS);
@@ -27,8 +27,12 @@ MqttClient mqttClient(deviceId, callback, &wifiHandler, WIFI_SERV);
 
 unsigned int temp;
 unsigned int humidity;
+unsigned int lightLevel;
 
-char msg[50];
+char msg[75];
+
+unsigned int wifiAttempts = 0;
+unsigned int mqttAttempts = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -38,9 +42,13 @@ void setup() {
 
   checkNetworkStatus();
 
-  pollSensors();
-
-  sendUpdate();
+  if(wifiAttempts < 5 && mqttAttempts < 5) {
+    pollSensors();
+    sendUpdate();
+  }
+  else {
+    Serial.println("Could not connect to server, will try again after sleeping...");
+  }
 
   deepSleep();
 }
@@ -49,25 +57,23 @@ void loop() {
   // After Deep Sleeping, the ESP8266 resets and begins at setup(). Loop will never be called
 }
 
-/**
- * TODO: The below should give up after so many tries so as not to drain the battery.
- * At some point, the server should detect the device dropped (or the server/wifi
- * is down anyway), and no amount of retrying will help on short time-scales.
- */
 void checkNetworkStatus() {
 
   // We need to wait for the wifi to be connected because otherwise we can't broadcast
   // our message over MQTT before returning to a deep sleep. This *should* mean the device
   // passes through this while very quickly after the first connection unless it is dropped
   // while deep sleeping, which shouldn't happen.
-  while(wifiHandler.loop() != 1) {
+  while(wifiHandler.loop() != 1 && wifiAttempts < 5) {
+    wifiAttempts += 1;
     Serial.println("Retrying wifi....");
     delay(2000);
   }
 
   int mqttState;
   mqttClient.bypassWait(1);
-  while((mqttState = mqttClient.loop()) < 1 || mqttState > 3) {
+  mqttClient.doNotSubscribe(1);
+  while( ((mqttState = mqttClient.loop()) < 1 || mqttState > 3) && mqttAttempts < 5) {
+    mqttAttempts += 1;
     Serial.println("Retrying MQTT");
     delay(1000);
   }
@@ -81,27 +87,31 @@ void pollSensors() {
   // TODO: In the future, keep retrying until we get a successful reading.
   if(isnan(event.temperature)) {
     Serial.println("Unable to read sensor...");
-    return;
   }
-  temp = event.temperature;
-  Serial.print("Temperature: ");
-  Serial.print(temp);
-  Serial.println();
+  else {
+    temp = event.temperature;
+    Serial.print("Temperature: ");
+    Serial.println(temp);
+  }
 
   dht.humidity().getEvent(&event);
   if (isnan(event.relative_humidity)) {
     Serial.println("Error reading humidity!");
-    return;
   }
-  humidity = event.relative_humidity;
-  Serial.print("  Humidity: ");
-  Serial.print(humidity);
-  Serial.println();
+  else {
+    humidity = event.relative_humidity;
+    Serial.print("Humidity: ");
+    Serial.println(humidity);
+  }
+
+  lightLevel = analogRead(A0);
+  Serial.print("Light Level: ");
+  Serial.println(lightLevel);
 }
 
 void sendUpdate() {
-  snprintf (msg, 50, "{\"temperature\":%d,\"humidity\":%d}", temp, humidity);
-  mqttClient.publishMessage("ambient_alpha/sensor", msg);
+  snprintf (msg, 75, "{\"temperature\":%d, \"humidity\":%d, \"light\":%d}", temp, humidity, lightLevel);
+  mqttClient.publishMessage("ambient/sync/ambient_alpha", msg);
 }
 
 void deepSleep() {
