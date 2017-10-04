@@ -60,15 +60,17 @@ void loop() {
 void checkNetworkStatus() {
 
   // We need to wait for the wifi to be connected because otherwise we can't broadcast
-  // our message over MQTT before returning to a deep sleep. This *should* mean the device
-  // passes through this while very quickly after the first connection unless it is dropped
-  // while deep sleeping, which shouldn't happen.
+  // our message over MQTT before returning to a deep sleep. The wifi connection is
+  // dropped after every deep sleep, so we will always be renegeogiating a connection
+  // at each run through.
   while(wifiHandler.loop() != 1 && wifiAttempts < 5) {
     wifiAttempts += 1;
     Serial.println("Retrying wifi....");
     delay(2000);
   }
 
+  // Same here, the server will drop our MQTT connection after about 15 seconds of non-activity.
+  // TODO: Can we tell the server we are disconnecting first? That would be cleaner.
   int mqttState;
   mqttClient.bypassWait(1);
   mqttClient.doNotSubscribe(1);
